@@ -67,24 +67,33 @@ jobs:
             echo "EXPANDED_CODE_SIGN_IDENTITY=" >> "$CONFIG"
           fi
 
+      - name: Extract Dynamic Version
+        id: get_version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | head -n1 | cut -d ' ' -f 2 | cut -d '+' -f 1)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "BUILD_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
+
       - name: Build iOS App without code signing
         run: |
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign --build-name=${{ env.VERSION }} --build-number=${{ env.BUILD_NUMBER }}
 
       - name: Package .app into Versioned IPA
         run: |
           mkdir -p build/ios/ipa/Payload
           cp -r build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
           cd build/ios/ipa
-          zip -r -9 ../../../NeoFocus-v0.5.0.ipa Payload
+          zip -r -9 ../../../NeoFocus-v${{ env.VERSION }}.ipa Payload
           cd ../../..
-          cp NeoFocus-v0.5.0.ipa app-release.ipa
+          cp NeoFocus-v${{ env.VERSION }}.ipa NeoFocus-v${{ env.VERSION }}-b${{ env.BUILD_NUMBER }}.ipa
+          cp NeoFocus-v${{ env.VERSION }}.ipa NeoFocus-latest.ipa
+          cp NeoFocus-v${{ env.VERSION }}.ipa app-release.ipa
 
       - name: Upload Versioned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NeoFocus-v0.5.0-ipa
-          path: NeoFocus-v0.5.0.ipa
+          name: NeoFocus-v${{ env.VERSION }}-b${{ env.BUILD_NUMBER }}-ipa
+          path: NeoFocus-v${{ env.VERSION }}-b${{ env.BUILD_NUMBER }}.ipa
           retention-days: 14
 
       - name: Upload Standard IPA Artifact

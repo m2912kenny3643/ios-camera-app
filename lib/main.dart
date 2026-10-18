@@ -19,7 +19,7 @@ class NeoFocusApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NeoFocus Pro v0.5.0',
+      title: 'NeoFocus Pro v0.5.1',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
