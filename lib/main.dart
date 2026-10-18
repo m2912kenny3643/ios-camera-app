@@ -99,7 +99,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
   void _onTapScreen(TapDownDetails details) async {
     if (!_isReady || _controller == null) return;
-    final RenderBox box = context.findRenderBox() as RenderBox;
+    final RenderBox box = context.findRenderObject() as RenderBox;
     final Offset local = box.globalToLocal(details.globalPosition);
 
     setState(() {
