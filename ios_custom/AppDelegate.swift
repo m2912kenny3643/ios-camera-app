@@ -38,7 +38,7 @@ import CoreMedia
           result(false)
           return
         }
-        // Apple Vision coordinates: origin is bottom-left, normalized [0, 1]
+        // Apple Vision 座標系統：原點在左下角，正規化 [0, 1]
         let visionRect = CGRect(x: x, y: max(0.0, 1.0 - y - h), width: min(1.0, w), height: min(1.0, h))
         let initObservation = VNDetectedObjectObservation(boundingBox: visionRect)
         let trackReq = VNTrackObjectRequest(detectedObjectObservation: initObservation)
@@ -82,14 +82,24 @@ import CoreMedia
         guard error == nil,
               let observations = request.results as? [VNAnimalBodyPoseObservation],
               let topObs = observations.first else {
-          // 若未偵測到骨架，回退至一般動物/鳥類檢測
           self?.runAnimalDetectionFallback(buffer: pixelBuffer, result: result)
           return
         }
 
+        var minX: Double = 1.0, minY: Double = 1.0, maxX: Double = 0.0, maxY: Double = 0.0
+        var hasValidPoint = false
         var eyeDict: [String: Double]? = nil
+
         if let points = try? topObs.recognizedPoints(.all) {
-          // 優先選取左眼或右眼
+          for (_, point) in points where point.confidence > 0.2 {
+            hasValidPoint = true
+            minX = min(minX, Double(point.location.x))
+            minY = min(minY, Double(point.location.y))
+            maxX = max(maxX, Double(point.location.x))
+            maxY = max(maxY, Double(point.location.y))
+          }
+
+          // 優先選取左眼或右眼 (Eye-AF)
           if let leftEye = points[VNAnimalBodyPoseObservation.JointName.leftEye], leftEye.confidence > 0.3 {
             eyeDict = ["x": Double(leftEye.location.x), "y": Double(1.0 - leftEye.location.y)]
           } else if let rightEye = points[VNAnimalBodyPoseObservation.JointName.rightEye], rightEye.confidence > 0.3 {
@@ -99,14 +109,18 @@ import CoreMedia
           }
         }
 
-        let box = topObs.boundingBox
+        let boxW = hasValidPoint ? max(0.12, min(0.9, maxX - minX + 0.08)) : 0.30
+        let boxH = hasValidPoint ? max(0.12, min(0.9, maxY - minY + 0.08)) : 0.30
+        let boxX = hasValidPoint ? max(0.0, minX - 0.04) : 0.35
+        let boxY = hasValidPoint ? max(0.0, 1.0 - maxY - 0.04) : 0.35
+
         let payload: [String: Any] = [
           "detected": true,
-          "label": "鳥類/動物",
-          "x": Double(box.origin.x),
-          "y": Double(max(0.0, 1.0 - box.origin.y - box.size.height)),
-          "w": Double(box.size.width),
-          "h": Double(box.size.height),
+          "label": "鳥類/動物 (ANE)",
+          "x": boxX,
+          "y": boxY,
+          "w": boxW,
+          "h": boxH,
           "eye": eyeDict as Any,
           "confidence": Double(topObs.confidence)
         ]
@@ -126,7 +140,7 @@ import CoreMedia
     }
   }
 
-  // 動物與鳥類物件辨識回退
+  // 動物與鳥類物件辨識回退 (VNRecognizeAnimalsRequest)
   private func runAnimalDetectionFallback(buffer: CVPixelBuffer, result: @escaping FlutterResult) {
     if #available(iOS 13.0, *) {
       let animalRequest = VNRecognizeAnimalsRequest { request, error in
@@ -139,7 +153,7 @@ import CoreMedia
 
         let box = topAnimal.boundingBox
         let rawLabel = topAnimal.labels.first?.identifier ?? "動物"
-        let label = rawLabel == "Bird" ? "鳥類" : (rawLabel == "Cat" || rawLabel == "Dog" ? "動物" : rawLabel)
+        let label = rawLabel == "Bird" ? "鳥類 (ANE)" : (rawLabel == "Cat" || rawLabel == "Dog" ? "動物 (ANE)" : "\(rawLabel) (ANE)")
 
         let payload: [String: Any] = [
           "detected": true,
@@ -166,7 +180,7 @@ import CoreMedia
     }
   }
 
-  // 2. Apple Neural Engine 高速光流目標鎖定追蹤 (60fps)
+  // 2. Apple Neural Engine 高速光流目標鎖定追蹤 (60fps VNTrackObjectRequest)
   private func processOpticalTrack(data: Data, width: Int, height: Int, request: VNTrackObjectRequest, result: @escaping FlutterResult) {
     guard let pixelBuffer = self.createPixelBuffer(from: data, width: width, height: height) else {
       result(nil)
