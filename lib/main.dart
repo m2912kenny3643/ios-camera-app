@@ -8,14 +8,8 @@ import 'package:gal/gal.dart';
 
 List<CameraDescription> _cameras = [];
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  try {
-    _cameras = await availableCameras();
-  } catch (e) {
-    debugPrint("Failed to initialize cameras: $e");
-  }
   runApp(const NeoFocusApp());
 }
 
@@ -102,15 +96,23 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   }
 
   Future<void> _initCamera() async {
-    if (_cameras.isEmpty) return;
-    _controller = CameraController(
-      _cameras[0],
-      ResolutionPreset.max,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.bgra8888,
-    );
-
     try {
+      if (_cameras.isEmpty) {
+        _cameras = await availableCameras();
+      }
+      if (_cameras.isEmpty) {
+        debugPrint("No cameras found on device");
+        _startFallbackAnimation();
+        return;
+      }
+
+      _controller = CameraController(
+        _cameras[0],
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.bgra8888,
+      );
+
       await _controller!.initialize();
       _minExposure = await _controller!.getMinExposureOffset();
       _maxExposure = await _controller!.getMaxExposureOffset();
@@ -121,7 +123,11 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         _startVisionStream();
       }
     } catch (e) {
-      debugPrint("Camera error: $e");
+      debugPrint("Camera initialization error: $e");
+      if (mounted) {
+        setState(() => _isReady = false);
+      }
+      _startFallbackAnimation();
     }
   }
 
@@ -145,6 +151,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
               'bytes': image.planes[0].bytes,
               'width': image.width,
               'height': image.height,
+              'bytesPerRow': image.planes[0].bytesPerRow,
             });
             if (result != null && result is Map && mounted) {
               final double x = (result['x'] as num).toDouble().clamp(0.0, 1.0);
@@ -163,6 +170,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
               'bytes': image.planes[0].bytes,
               'width': image.width,
               'height': image.height,
+              'bytesPerRow': image.planes[0].bytesPerRow,
             });
             if (result != null && result is Map && mounted) {
               final double x = (result['x'] as num).toDouble().clamp(0.0, 1.0);

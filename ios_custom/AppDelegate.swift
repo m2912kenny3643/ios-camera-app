@@ -5,74 +5,86 @@ import CoreMedia
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  private var sequenceHandler = VNSequenceRequestHandler()
-  private var currentTrackRequest: VNTrackObjectRequest?
-  
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
-    let visionChannel = FlutterMethodChannel(name: "tw.neofocus/vision",
-                                              binaryMessenger: controller.binaryMessenger)
-    
-    visionChannel.setMethodCallHandler({ [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
-      guard let self = self else { return }
-      
-      if call.method == "detectAnimalPose" {
-        guard let args = call.arguments as? [String: Any],
-              let bytesData = (args["bytes"] as? FlutterStandardTypedData)?.data,
-              let width = args["width"] as? Int,
-              let height = args["height"] as? Int else {
-          result(nil)
-          return
-        }
-        self.processAnimalVision(data: bytesData, width: width, height: height, result: result)
-        
-      } else if call.method == "lockTarget" {
-        guard let args = call.arguments as? [String: Any],
-              let x = args["x"] as? Double,
-              let y = args["y"] as? Double,
-              let w = args["w"] as? Double,
-              let h = args["h"] as? Double else {
-          result(false)
-          return
-        }
-        // Apple Vision 座標系統：原點在左下角，正規化 [0, 1]
-        let visionRect = CGRect(x: x, y: max(0.0, 1.0 - y - h), width: min(1.0, w), height: min(1.0, h))
-        let initObservation = VNDetectedObjectObservation(boundingBox: visionRect)
-        let trackReq = VNTrackObjectRequest(detectedObjectObservation: initObservation)
-        trackReq.trackingLevel = .fast
-        self.currentTrackRequest = trackReq
-        result(true)
-        
-      } else if call.method == "trackLockedTarget" {
-        guard let args = call.arguments as? [String: Any],
-              let bytesData = (args["bytes"] as? FlutterStandardTypedData)?.data,
-              let width = args["width"] as? Int,
-              let height = args["height"] as? Int,
-              let trackReq = self.currentTrackRequest else {
-          result(nil)
-          return
-        }
-        self.processOpticalTrack(data: bytesData, width: width, height: height, request: trackReq, result: result)
-        
-      } else if call.method == "cancelLock" {
-        self.currentTrackRequest = nil
-        result(true)
-        
-      } else {
-        result(FlutterMethodNotImplemented)
-      }
-    })
-
     GeneratedPluginRegistrant.register(with: self)
+    
+    // 透過 Flutter Plugin 標準管道註冊 Vision 神經引擎，解耦 Window / UI 生命週期，避免閃退
+    if let registrar = self.registrar(forPlugin: "VisionPlugin") {
+      VisionPlugin.register(with: registrar)
+    }
+    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+}
+
+class VisionPlugin: NSObject, FlutterPlugin {
+  private static var shared: VisionPlugin?
+  private var sequenceHandler = VNSequenceRequestHandler()
+  private var currentTrackRequest: VNTrackObjectRequest?
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(name: "tw.neofocus/vision", binaryMessenger: registrar.messenger())
+    let instance = VisionPlugin()
+    self.shared = instance
+    registrar.addMethodCallDelegate(instance, channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "detectAnimalPose" {
+      guard let args = call.arguments as? [String: Any],
+            let bytesData = (args["bytes"] as? FlutterStandardTypedData)?.data,
+            let width = args["width"] as? Int,
+            let height = args["height"] as? Int else {
+        result(nil)
+        return
+      }
+      let bytesPerRow = (args["bytesPerRow"] as? Int) ?? (width * 4)
+      self.processAnimalVision(data: bytesData, width: width, height: height, bytesPerRow: bytesPerRow, result: result)
+      
+    } else if call.method == "lockTarget" {
+      guard let args = call.arguments as? [String: Any],
+            let x = args["x"] as? Double,
+            let y = args["y"] as? Double,
+            let w = args["w"] as? Double,
+            let h = args["h"] as? Double else {
+        result(false)
+        return
+      }
+      // Apple Vision 座標系統：原點在左下角，正規化 [0, 1]
+      let visionRect = CGRect(x: x, y: max(0.0, 1.0 - y - h), width: min(1.0, w), height: min(1.0, h))
+      let initObservation = VNDetectedObjectObservation(boundingBox: visionRect)
+      let trackReq = VNTrackObjectRequest(detectedObjectObservation: initObservation)
+      trackReq.trackingLevel = .fast
+      self.currentTrackRequest = trackReq
+      result(true)
+      
+    } else if call.method == "trackLockedTarget" {
+      guard let args = call.arguments as? [String: Any],
+            let bytesData = (args["bytes"] as? FlutterStandardTypedData)?.data,
+            let width = args["width"] as? Int,
+            let height = args["height"] as? Int,
+            let trackReq = self.currentTrackRequest else {
+        result(nil)
+        return
+      }
+      let bytesPerRow = (args["bytesPerRow"] as? Int) ?? (width * 4)
+      self.processOpticalTrack(data: bytesData, width: width, height: height, bytesPerRow: bytesPerRow, request: trackReq, result: result)
+      
+    } else if call.method == "cancelLock" {
+      self.currentTrackRequest = nil
+      result(true)
+      
+    } else {
+      result(FlutterMethodNotImplemented)
+    }
   }
 
   // 1. Apple Neural Engine (ANE) 鳥類/動物骨架與眼部識別
-  private func processAnimalVision(data: Data, width: Int, height: Int, result: @escaping FlutterResult) {
-    guard let pixelBuffer = self.createPixelBuffer(from: data, width: width, height: height) else {
+  private func processAnimalVision(data: Data, width: Int, height: Int, bytesPerRow: Int, result: @escaping FlutterResult) {
+    guard let pixelBuffer = self.createPixelBuffer(from: data, width: width, height: height, bytesPerRow: bytesPerRow) else {
       result(nil)
       return
     }
@@ -181,8 +193,8 @@ import CoreMedia
   }
 
   // 2. Apple Neural Engine 高速光流目標鎖定追蹤 (60fps VNTrackObjectRequest)
-  private func processOpticalTrack(data: Data, width: Int, height: Int, request: VNTrackObjectRequest, result: @escaping FlutterResult) {
-    guard let pixelBuffer = self.createPixelBuffer(from: data, width: width, height: height) else {
+  private func processOpticalTrack(data: Data, width: Int, height: Int, bytesPerRow: Int, request: VNTrackObjectRequest, result: @escaping FlutterResult) {
+    guard let pixelBuffer = self.createPixelBuffer(from: data, width: width, height: height, bytesPerRow: bytesPerRow) else {
       result(nil)
       return
     }
@@ -213,7 +225,7 @@ import CoreMedia
   }
 
   // 高效建立 CVPixelBuffer
-  private func createPixelBuffer(from data: Data, width: Int, height: Int) -> CVPixelBuffer? {
+  private func createPixelBuffer(from data: Data, width: Int, height: Int, bytesPerRow: Int) -> CVPixelBuffer? {
     var pixelBuffer: CVPixelBuffer?
     let options: [CFString: Any] = [
       kCVPixelBufferCGImageCompatibilityKey: true,
@@ -226,7 +238,7 @@ import CoreMedia
         height,
         kCVPixelFormatType_32BGRA,
         UnsafeMutableRawPointer(mutating: rawBuffer.baseAddress!),
-        width * 4,
+        bytesPerRow,
         nil,
         nil,
         options as CFDictionary,

@@ -35,13 +35,15 @@ jobs:
 
       - name: Configure iOS Camera, Mic & Photo Permissions in Info.plist
         run: |
+          export LC_ALL=en_US.UTF-8
+          export LANG=en_US.UTF-8
           PLIST="ios/Runner/Info.plist"
           if [ -f "$PLIST" ]; then
             echo "Injecting Camera, Microphone & Photo permissions into Info.plist..."
-            /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景'" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '錄影時需要存取麥克風錄音'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '錄影時需要存取麥克風錄音'" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片'" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景 (Camera access required for viewfinder and manual focus)'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景 (Camera access required for viewfinder and manual focus)'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '錄影時需要存取麥克風錄音 (Microphone access required for recording)'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '錄影時需要存取麥克風錄音 (Microphone access required for recording)'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片 (Photo library access required to save photos)'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片 (Photo library access required to save photos)'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖 (Photo library access required to view photos)'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖 (Photo library access required to view photos)'" "$PLIST"
           fi
 
       - name: Install Dependencies
