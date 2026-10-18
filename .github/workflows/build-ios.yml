@@ -100,9 +100,27 @@ jobs:
           EOF
           cd ..
 
+      - name: Disable Code Signing in Xcode Project & xcconfig
+        run: |
+          PBX="ios/Runner.xcodeproj/project.pbxproj"
+          if [ -f "$PBX" ]; then
+            sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX" || true
+            sed -i '' 's/DEVELOPMENT_TEAM = [A-Za-z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PBX" || true
+            sed -i '' 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' "$PBX" || true
+          fi
+          
+          # 透過 Release.xcconfig 強制 Xcode 關閉簽署驗證與 Team 檢查
+          CONFIG="ios/Flutter/Release.xcconfig"
+          if [ -f "$CONFIG" ]; then
+            echo "CODE_SIGNING_ALLOWED=NO" >> "$CONFIG"
+            echo "CODE_SIGNING_REQUIRED=NO" >> "$CONFIG"
+            echo "CODE_SIGN_IDENTITY=" >> "$CONFIG"
+            echo "EXPANDED_CODE_SIGN_IDENTITY=" >> "$CONFIG"
+          fi
+
       - name: Build iOS App without code signing
         run: |
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign --verbose
 
       - name: Package .app into IPA
         run: |
