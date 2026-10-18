@@ -77,7 +77,7 @@ import CoreMedia
       return
     }
 
-    if #available(iOS 14.0, *) {
+    if #available(iOS 17.0, *) {
       let animalPoseRequest = VNDetectAnimalBodyPoseRequest { [weak self] request, error in
         guard error == nil,
               let observations = request.results as? [VNAnimalBodyPoseObservation],
