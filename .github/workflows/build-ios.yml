@@ -26,13 +26,15 @@ jobs:
             flutter create --platforms=ios --project-name=neofocus_camera --org tw.neofocus .
           fi
 
-      - name: Configure iOS Camera & Mic Permissions in Info.plist
+      - name: Configure iOS Camera, Mic & Photo Permissions in Info.plist
         run: |
           PLIST="ios/Runner/Info.plist"
           if [ -f "$PLIST" ]; then
-            echo "Injecting Camera & Microphone permissions into Info.plist..."
+            echo "Injecting Camera, Microphone & Photo permissions into Info.plist..."
             /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'NeoFocus 相機需要存取鏡頭以提供手動專業對焦與即時取景'" "$PLIST"
             /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '錄影時需要存取麥克風錄音'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '錄影時需要存取麥克風錄音'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'NeoFocus 需要存取相簿以儲存您拍攝的高畫質照片'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'NeoFocus 需要存取相簿以顯示最後拍攝的照片縮圖'" "$PLIST"
           fi
 
       - name: Install Dependencies
