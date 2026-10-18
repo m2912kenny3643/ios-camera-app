@@ -35,51 +35,24 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '錄影時需要存取麥克風錄音'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '錄影時需要存取麥克風錄音'" "$PLIST"
           fi
 
-      - name: Install Dependencies & Bootstrap iOS Config
-        run: |
-          flutter pub get
-          # 讓 Flutter 官方工具自動建立官方 Podfile 與 native xcconfig 關聯
-          flutter build ios --config-only --no-codesign
+      - name: Install Dependencies
+        run: flutter pub get
 
-      - name: Configure Podfile for Xcode 16 & iOS 14+
-        run: |
-          cd ios
-          # 確保支援最低版本提升至 iOS 14.0
-          sed -i '' "s/# platform :ios, '12.0'/platform :ios, '14.0'/g" Podfile 2>/dev/null || true
-          sed -i '' "s/# platform :ios, '11.0'/platform :ios, '14.0'/g" Podfile 2>/dev/null || true
-          sed -i '' "s/platform :ios, '12.0'/platform :ios, '14.0'/g" Podfile 2>/dev/null || true
-
-          # 在 post_install Hook 內加入關閉程式碼簽署與最低版本限制
-          ruby -e "
-            file = 'Podfile'
-            content = File.read(file)
-            if !content.include?('CODE_SIGNING_ALLOWED')
-              if content.include?('flutter_additional_ios_build_settings(target)')
-                content = content.sub('flutter_additional_ios_build_settings(target)', \"flutter_additional_ios_build_settings(target)\\n        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'\\n        config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\\n        config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\")
-              end
-              File.write(file, content)
-            end
-          "
-
-          # 執行 pod install 同步 lockfile
-          pod install --repo-update
-          cd ..
-
-      - name: Disable Code Signing & Sandbox strict checks in Xcode Project
+      - name: Configure Xcode Project for Unsigned Build
         run: |
           PBX="ios/Runner.xcodeproj/project.pbxproj"
           if [ -f "$PBX" ]; then
-            # 1. 切換為手動簽署並清除 Team
+            # 1. 切換為手動簽名 (Manual)
             sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX" || true
-            sed -i '' 's/DEVELOPMENT_TEAM = [A-Za-z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PBX" || true
+            # 2. 注入 10 碼虛擬 Team ID (滿足 Flutter 實機前置檢查) 並關閉簽名
+            sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = tw.neofocus.neofocusCamera;/PRODUCT_BUNDLE_IDENTIFIER = tw.neofocus.neofocusCamera; DEVELOPMENT_TEAM = DUMMY12345; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO;/g' "$PBX" || true
             sed -i '' 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' "$PBX" || true
-            # 2. 免疫 CocoaPods Sandbox Diff Check (避免沙盒路徑不一致報錯中斷)
-            sed -i '' 's/diff \"\${PODS_PODFILE_DIR_PATH}\/Podfile.lock\"/echo \"Skipping Podfile diff\"; true # diff/g' "$PBX" || true
           fi
           
-          # 3. 透過 Release.xcconfig 注入關閉簽署驗證
+          # 3. 透過 Release.xcconfig 全域關閉簽署驗證
           CONFIG="ios/Flutter/Release.xcconfig"
           if [ -f "$CONFIG" ]; then
+            echo "DEVELOPMENT_TEAM=DUMMY12345" >> "$CONFIG"
             echo "CODE_SIGNING_ALLOWED=NO" >> "$CONFIG"
             echo "CODE_SIGNING_REQUIRED=NO" >> "$CONFIG"
             echo "CODE_SIGN_IDENTITY=" >> "$CONFIG"
@@ -88,7 +61,7 @@ jobs:
 
       - name: Build iOS App without code signing
         run: |
-          flutter build ios --release --no-codesign --verbose
+          flutter build ios --release --no-codesign
 
       - name: Package .app into IPA
         run: |
