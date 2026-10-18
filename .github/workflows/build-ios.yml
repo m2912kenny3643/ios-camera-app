@@ -23,7 +23,7 @@ jobs:
         run: |
           if [ ! -d "ios" ]; then
             echo "Scaffolding iOS project..."
-            flutter create --platforms=ios --org tw.neofocus .
+            flutter create --platforms=ios --project-name=neofocus_camera --org tw.neofocus .
           fi
 
       - name: Configure iOS Camera & Mic Permissions in Info.plist
@@ -38,8 +38,71 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Configure Podfile for Xcode 16 & iOS 14+
+        run: |
+          cd ios
+          # 若沒有 Podfile 先行生成
+          if [ ! -f "Podfile" ]; then
+            pod init
+          fi
+          # 設定最低版本為 iOS 14.0，並強制關閉所有 Pods 的程式碼簽署驗證
+          cat << 'EOF' > Podfile
+          platform :ios, '14.0'
+
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get has executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+            target 'RunnerTests' do
+              inherit! :search_paths
+            end
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ""
+                config.build_settings['CODE_SIGNING_IDENTITY'] = ""
+              end
+            end
+          end
+          EOF
+          cd ..
+
       - name: Build iOS App without code signing
-        run: flutter build ios --release --no-codesign
+        run: |
+          flutter build ios --release --no-codesign
 
       - name: Package .app into IPA
         run: |
