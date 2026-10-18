@@ -26,6 +26,13 @@ jobs:
             flutter create --platforms=ios --project-name=neofocus_camera --org tw.neofocus .
           fi
 
+      - name: Inject Apple Neural Engine Vision Engine into Runner
+        run: |
+          if [ -f "ios_custom/AppDelegate.swift" ]; then
+            echo "Injecting native Apple Vision / Neural Engine tracking into ios/Runner/AppDelegate.swift..."
+            cp -f ios_custom/AppDelegate.swift ios/Runner/AppDelegate.swift
+          fi
+
       - name: Configure iOS Camera, Mic & Photo Permissions in Info.plist
         run: |
           PLIST="ios/Runner/Info.plist"
@@ -44,14 +51,11 @@ jobs:
         run: |
           PBX="ios/Runner.xcodeproj/project.pbxproj"
           if [ -f "$PBX" ]; then
-            # 1. 切換為手動簽名 (Manual)
             sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX" || true
-            # 2. 注入 10 碼虛擬 Team ID (滿足 Flutter 實機前置檢查) 並關閉簽名
             sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = tw.neofocus.neofocusCamera;/PRODUCT_BUNDLE_IDENTIFIER = tw.neofocus.neofocusCamera; DEVELOPMENT_TEAM = DUMMY12345; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO;/g' "$PBX" || true
             sed -i '' 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' "$PBX" || true
           fi
           
-          # 3. 透過 Release.xcconfig 全域關閉簽署驗證
           CONFIG="ios/Flutter/Release.xcconfig"
           if [ -f "$CONFIG" ]; then
             echo "DEVELOPMENT_TEAM=DUMMY12345" >> "$CONFIG"
@@ -65,15 +69,23 @@ jobs:
         run: |
           flutter build ios --release --no-codesign
 
-      - name: Package .app into IPA
+      - name: Package .app into Versioned IPA
         run: |
           mkdir -p build/ios/ipa/Payload
           cp -r build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
           cd build/ios/ipa
-          zip -r -9 ../../../app-release.ipa Payload
+          zip -r -9 ../../../NeoFocus-v0.5.0.ipa Payload
           cd ../../..
+          cp NeoFocus-v0.5.0.ipa app-release.ipa
 
-      - name: Upload IPA Artifact
+      - name: Upload Versioned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeoFocus-v0.5.0-ipa
+          path: NeoFocus-v0.5.0.ipa
+          retention-days: 14
+
+      - name: Upload Standard IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release

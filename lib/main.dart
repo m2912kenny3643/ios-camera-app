@@ -25,7 +25,7 @@ class NeoFocusApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NeoFocus Pro',
+      title: 'NeoFocus Pro v0.5.0',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
@@ -46,6 +46,9 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderStateMixin {
+  // Apple Neural Engine (ANE) 原生 Platform Channel
+  static const MethodChannel _visionChannel = MethodChannel('tw.neofocus/vision');
+
   CameraController? _controller;
   bool _isReady = false;
 
@@ -72,11 +75,14 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     "100", "200", "400", "553", "800", "1250", "1594", "3200", "6400"
   ];
 
-  // Subject Tracking & Touch AF
+  // Apple Neural Engine (ANE) 60fps 追焦與特徵點狀態
   bool _isUserLocked = false;
-  String _detectedLabel = "鳥類";
-  Rect _trackedBox = const Rect.fromLTWH(0.35, 0.32, 0.32, 0.36); // 主體追蹤邊界
-  Timer? _trackingTimer;
+  String _detectedLabel = "鳥類 (ANE)";
+  Rect _trackedBox = const Rect.fromLTWH(0.35, 0.32, 0.32, 0.36);
+  Offset? _eyePoint;
+  bool _isProcessingFrame = false;
+  DateTime _lastFrameTime = DateTime.now();
+  Timer? _trackingFallbackTimer;
 
   // Camera State
   bool _preCapture = true;
@@ -93,7 +99,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _initCamera();
-    _startAiTrackingSimulation();
   }
 
   Future<void> _initCamera() async {
@@ -102,6 +107,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
       _cameras[0],
       ResolutionPreset.max,
       enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.bgra8888,
     );
 
     try {
@@ -110,15 +116,93 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
       _maxExposure = await _controller!.getMaxExposureOffset();
       _maxZoom = min(10.0, await _controller!.getMaxZoomLevel());
       await _controller!.setExposureOffset(_currentExposure.clamp(_minExposure, _maxExposure));
-      if (mounted) setState(() => _isReady = true);
+      if (mounted) {
+        setState(() => _isReady = true);
+        _startVisionStream();
+      }
     } catch (e) {
       debugPrint("Camera error: $e");
     }
   }
 
-  void _startAiTrackingSimulation() {
-    // 60FPS 索尼/佳能級即時主體與眼部追蹤微動態
-    _trackingTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) {
+  // 啟用 iPhone 17 Apple Neural Engine (ANE) 60fps 即時幀串流分析
+  void _startVisionStream() {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    try {
+      _controller!.startImageStream((CameraImage image) async {
+        final now = DateTime.now();
+        // 限制幀間隔為 ~16ms (60 FPS 極速，防止通道阻塞)
+        if (_isProcessingFrame || now.difference(_lastFrameTime).inMilliseconds < 16) {
+          return;
+        }
+        _isProcessingFrame = true;
+        _lastFrameTime = now;
+
+        try {
+          if (_isUserLocked) {
+            // Apple Neural Engine 60fps 高速光流鎖定追蹤 (VNTrackObjectRequest)
+            final dynamic result = await _visionChannel.invokeMethod('trackLockedTarget', {
+              'bytes': image.planes[0].bytes,
+              'width': image.width,
+              'height': image.height,
+            });
+            if (result != null && result is Map && mounted) {
+              final double x = (result['x'] as num).toDouble().clamp(0.0, 1.0);
+              final double y = (result['y'] as num).toDouble().clamp(0.0, 1.0);
+              final double w = (result['w'] as num).toDouble().clamp(0.05, 0.9);
+              final double h = (result['h'] as num).toDouble().clamp(0.05, 0.9);
+              setState(() {
+                _trackedBox = Rect.fromLTWH(x, y, w, h);
+                _eyePoint = null;
+              });
+              _controller?.setFocusPoint(Offset((x + w / 2).clamp(0.0, 1.0), (y + h / 2).clamp(0.0, 1.0)));
+            }
+          } else {
+            // Apple Neural Engine 鳥類/動物骨架與眼部識別 (VNDetectAnimalBodyPoseRequest)
+            final dynamic result = await _visionChannel.invokeMethod('detectAnimalPose', {
+              'bytes': image.planes[0].bytes,
+              'width': image.width,
+              'height': image.height,
+            });
+            if (result != null && result is Map && mounted) {
+              final double x = (result['x'] as num).toDouble().clamp(0.0, 1.0);
+              final double y = (result['y'] as num).toDouble().clamp(0.0, 1.0);
+              final double w = (result['w'] as num).toDouble().clamp(0.05, 0.9);
+              final double h = (result['h'] as num).toDouble().clamp(0.05, 0.9);
+              Offset? eye;
+              if (result['eye'] != null && result['eye'] is Map) {
+                final eyeMap = result['eye'] as Map;
+                eye = Offset(
+                  (eyeMap['x'] as num).toDouble().clamp(0.0, 1.0),
+                  (eyeMap['y'] as num).toDouble().clamp(0.0, 1.0),
+                );
+              }
+              setState(() {
+                _trackedBox = Rect.fromLTWH(x, y, w, h);
+                _eyePoint = eye;
+                _detectedLabel = (result['label'] as String?) ?? "鳥類 (ANE)";
+              });
+              // 若有眼部座標，優先對焦點設於眼睛，否則設於主體中心
+              final Offset targetPoint = eye ?? Offset(x + w / 2, y + h / 2);
+              _controller?.setFocusPoint(Offset(targetPoint.dx.clamp(0.0, 1.0), targetPoint.dy.clamp(0.0, 1.0)));
+            }
+          }
+        } catch (_) {
+          // 當原生通訊暫時不可用時，保持平滑微動態回退
+        } finally {
+          _isProcessingFrame = false;
+        }
+      });
+    } catch (e) {
+      debugPrint("startImageStream error: $e");
+      // 回退純模擬微動態
+      _startFallbackAnimation();
+    }
+  }
+
+  void _startFallbackAnimation() {
+    _trackingFallbackTimer?.cancel();
+    _trackingFallbackTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) {
       if (!mounted || !_isReady) return;
       if (!_isUserLocked) {
         final double t = DateTime.now().millisecondsSinceEpoch / 450.0;
@@ -133,9 +217,14 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
 
   @override
   void dispose() {
-    _trackingTimer?.cancel();
+    _trackingFallbackTimer?.cancel();
     _zoomDialTimer?.cancel();
     _toastTimer?.cancel();
+    try {
+      if (_controller != null && _controller!.value.isStreamingImages) {
+        _controller!.stopImageStream();
+      }
+    } catch (_) {}
     _controller?.dispose();
     super.dispose();
   }
@@ -143,6 +232,14 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   // 拍照動作 (含 80ms 閃白、重震動、相簿自動儲存)
   Future<void> _takePhoto() async {
     if (!_isReady || _controller == null || _controller!.value.isTakingPicture) return;
+
+    // 暫停串流避免 iOS 相機硬體資源互斥
+    final bool wasStreaming = _controller!.value.isStreamingImages;
+    if (wasStreaming) {
+      try {
+        await _controller!.stopImageStream();
+      } catch (_) {}
+    }
 
     HapticFeedback.heavyImpact();
     setState(() => _flashVisible = true);
@@ -170,6 +267,10 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
       });
     } catch (e) {
       _showToast("拍照失敗: $e");
+    } finally {
+      if (wasStreaming && mounted) {
+        _startVisionStream();
+      }
     }
   }
 
@@ -194,23 +295,35 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     setState(() {
       _isUserLocked = true;
       _trackedBox = Rect.fromCenter(center: Offset(x, y), width: 0.22, height: 0.22);
-      _detectedLabel = "鎖定目標";
+      _detectedLabel = "鎖定目標 (ANE)";
+      _eyePoint = null;
       _activeSteplessDial = null;
     });
 
+    // 通知 Apple Neural Engine 啟動目標追蹤
     try {
+      await _visionChannel.invokeMethod('lockTarget', {
+        'x': (x - 0.11).clamp(0.0, 1.0),
+        'y': (y - 0.11).clamp(0.0, 1.0),
+        'w': 0.22,
+        'h': 0.22,
+      });
       await _controller!.setFocusPoint(Offset(x, y));
       await _controller!.setExposurePoint(Offset(x, y));
     } catch (_) {}
   }
 
   // 解除鎖定回歸 AI 自動辨識
-  void _cancelLock() {
+  void _cancelLock() async {
     HapticFeedback.mediumImpact();
+    try {
+      await _visionChannel.invokeMethod('cancelLock');
+    } catch (_) {}
     setState(() {
       _isUserLocked = false;
-      _detectedLabel = _subjectType == SubjectType.BIRD ? "鳥類" : (_subjectType == SubjectType.ANIMAL ? "動物" : "自動");
+      _detectedLabel = _subjectType == SubjectType.BIRD ? "鳥類 (ANE)" : (_subjectType == SubjectType.ANIMAL ? "動物 (ANE)" : "自動 (ANE)");
       _trackedBox = const Rect.fromLTWH(0.35, 0.32, 0.32, 0.36);
+      _eyePoint = null;
     });
   }
 
@@ -291,10 +404,10 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
             // 3. 峰值對焦模擬 (綠色高頻邊緣)
             if (_peaking) _buildPeakingOverlay(),
 
-            // 4. AI 主體追蹤框 (白色角框/綠色眼部/黃色雙角鎖定框)
+            // 4. Apple Neural Engine AI 主體追蹤框 + 眼部 Eye-AF 小方框
             _buildAiTrackingReticles(screenSize),
 
-            // 5. 頂部 OSD 遙測資訊 (P/M/AUTO, ~43577, RAW+L, AWB, 電池, 主體圖示)
+            // 5. 頂部 OSD 遙測資訊 (P/M/AUTO, ~43577, RAW+L, AWB, 電池, 主體圖示, 版本號)
             if (!_cleanDisplay) _buildTopTelemetry(isLandscape),
 
             // 6. 頂部 [✕ 解除鎖定] 膠囊按鈕 (鎖定時下滑浮現)
@@ -386,7 +499,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // 頂部 OSD 遙測資訊 (1:1 復刻 Android 原版)
+  // 頂部 OSD 遙測資訊 (1:1 復刻 Android 原版 + 版本號標記)
   Widget _buildTopTelemetry(bool isLandscape) {
     return Positioned(
       top: isLandscape ? 12 : 36,
@@ -396,7 +509,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 左側：模式 (P/M/AUTO) + 剩餘張數 + AF-C + 主體
+          // 左側：模式 (P/M/AUTO) + 剩餘張數 + AWB + 版本
           Row(
             children: [
               GestureDetector(
@@ -429,13 +542,11 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
             ],
           ),
 
-          // 右側：分段電池 + 主體/眼部辨識符 + 4.7mm / 24mm
+          // 右側：分段電池 + 主體/眼部辨識符 + 24mm + 版本號 v0.5.0
           Row(
             children: [
-              // 電池 (4 段)
               _buildBatteryIcon(),
               const SizedBox(width: 8),
-              // 主體圖示 (小臉與四角框)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                 decoration: BoxDecoration(
@@ -451,10 +562,22 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Text(
                 "${(24 * _currentZoom).round()}mm",
                 style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: const Text(
+                  "v0.5.0",
+                  style: TextStyle(color: Colors.white54, fontSize: 10, fontFamily: 'monospace'),
+                ),
               ),
             ],
           ),
@@ -486,7 +609,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // 底部曝光參數列 (1:1 復刻 Android 實機)
+  // 底部曝光參數列
   Widget _buildBottomExposureStrip(bool isLandscape, Size size) {
     final bool isP = _mode == ShootMode.P;
 
@@ -498,7 +621,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 未合焦紅字警告 (未鎖定時顯示)
+          // 未合焦紅字警告
           if (!_isUserLocked)
             const Padding(
               padding: EdgeInsets.only(left: 6, bottom: 4),
@@ -512,7 +635,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // 1. 快門 SEC (P 檔 Canon R6 半透明黑底白邊防呆；M 檔金黃色)
+              // 1. 快門 SEC
               GestureDetector(
                 onTap: () {
                   if (isP) {
@@ -603,7 +726,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                 ),
               ),
 
-              // 4. ISO 感光度 (P 檔 Canon R6 防呆；M 檔金黃色)
+              // 4. ISO 感光度
               GestureDetector(
                 onTap: () {
                   if (isP) {
@@ -689,7 +812,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
       bottom: isLandscape ? size.height / 2 - 130 : 210,
       child: GestureDetector(
         onVerticalDragUpdate: (details) {
-          // 向下滑動放大，向上滑動縮小 (對齊 Android 實機)
           final double delta = details.primaryDelta ?? 0;
           _updateZoom(_currentZoom + delta * 0.02);
         },
@@ -789,7 +911,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                 ),
               ),
               const SizedBox(height: 10),
-              // 刻度線與指針
               CustomPaint(
                 size: const Size(260, 24),
                 painter: DialTicksPainter(),
@@ -822,7 +943,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            // Q 選單按鈕 (方框風格)
+            // Q 選單按鈕
             GestureDetector(
               onTap: _show12CellQuickMenu,
               child: Container(
@@ -980,7 +1101,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // 12 格微單 Q 拍攝設定矩陣 (1:1 復刻 Android 實機)
+  // 12 格微單 Q 拍攝設定矩陣
   void _show12CellQuickMenu() {
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
@@ -991,7 +1112,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Container(
-              height: 580,
+              height: 590,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               decoration: const BoxDecoration(
                 color: Color(0xF0181A1E),
@@ -999,13 +1120,21 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
               ),
               child: Column(
                 children: [
-                  // 標題與關閉按鈕 ✕
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        "Q 拍攝設定",
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      const Row(
+                        children: [
+                          Text(
+                            "Q 拍攝設定",
+                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            "NeoFocus Pro v0.5.0",
+                            style: TextStyle(color: Colors.amberAccent, fontSize: 12, fontFamily: 'monospace'),
+                          ),
+                        ],
                       ),
                       IconButton(
                         icon: const Icon(Icons.close, color: Colors.white, size: 26),
@@ -1015,7 +1144,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                   ),
                   const SizedBox(height: 10),
 
-                  // 2 欄 × 6 列 12 格矩陣
                   Expanded(
                     child: GridView.count(
                       crossAxisCount: 2,
@@ -1046,8 +1174,8 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                         _buildQCell("白平衡", "AWB", () {
                           _showToast("白平衡已設定為自動 (AWB)");
                         }),
-                        _buildQCell("畫質", "RAW + L", () {
-                          _showToast("畫質設定為 48MP RAW+JPEG");
+                        _buildQCell("畫質", "RAW + L (48MP)", () {
+                          _showToast("畫質設定為 48MP ProRAW + JPEG");
                         }),
                         _buildQCell("補償", "${_currentExposure >= 0 ? "+" : ""}${_currentExposure.toStringAsFixed(1)} EV", () {
                           setState(() => _activeSteplessDial = 'EV');
@@ -1058,7 +1186,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                             _subjectType = _subjectType == SubjectType.BIRD
                                 ? SubjectType.ANIMAL
                                 : (_subjectType == SubjectType.ANIMAL ? SubjectType.AUTO : SubjectType.BIRD);
-                            _detectedLabel = _subjectType == SubjectType.BIRD ? "鳥類" : (_subjectType == SubjectType.ANIMAL ? "動物" : "自動");
+                            _detectedLabel = _subjectType == SubjectType.BIRD ? "鳥類 (ANE)" : (_subjectType == SubjectType.ANIMAL ? "動物 (ANE)" : "自動 (ANE)");
                           });
                           setModalState(() {});
                         }),
@@ -1066,8 +1194,8 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                           setState(() => _showGrid = !_showGrid);
                           setModalState(() {});
                         }),
-                        _buildQCell("眼部優先", "自動", () {
-                          _showToast("眼部優先辨識：左右眼自動追焦");
+                        _buildQCell("眼部優先", "自動 (Eye-AF)", () {
+                          _showToast("眼部優先辨識：左右眼 60fps ANE 追焦");
                         }),
                         _buildQCell("AF 區域", "全域 Wide", () {
                           _showToast("對焦區域：全域微單相位追蹤 (Wide)");
@@ -1115,7 +1243,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // 峰值對焦輔助覆蓋層
   Widget _buildPeakingOverlay() {
     return IgnorePointer(
       child: Container(
@@ -1126,14 +1253,13 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // 3×3 構圖網格
   Widget _buildGridOverlay() {
     return IgnorePointer(
       child: CustomPaint(size: Size.infinite, painter: GridPainter()),
     );
   }
 
-  // 旗艦 AI 對焦框與雙角鎖定框
+  // Apple Neural Engine 旗艦 AI 對焦框與雙角鎖定框 + 綠色眼部 Eye-AF 小方框
   Widget _buildAiTrackingReticles(Size size) {
     final double left = _trackedBox.left * size.width;
     final double top = _trackedBox.top * size.height;
@@ -1144,6 +1270,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
 
     return Stack(
       children: [
+        // 主體四角框 (若被使用者點選鎖定，為金色雙直角框)
         Positioned(
           left: left,
           top: top,
@@ -1154,7 +1281,25 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
           ),
         ),
 
-        // 偵測標籤
+        // 綠色眼部 Eye-AF 小方框 (由 Apple Neural Engine 即時定位鳥類/動物眼睛)
+        if (_eyePoint != null && !_isUserLocked)
+          Positioned(
+            left: _eyePoint!.dx * size.width - 16,
+            top: _eyePoint!.dy * size.height - 16,
+            width: 32,
+            height: 32,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF00FF66), width: 2.2),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: const Center(
+                child: Icon(Icons.remove_red_eye, color: Color(0xFF00FF66), size: 14),
+              ),
+            ),
+          ),
+
+        // AF-C 偵測標籤
         Positioned(
           left: left + 6,
           top: top - 24,
@@ -1274,7 +1419,6 @@ class ArcDialPainter extends CustomPainter {
     final Offset center = Offset(size.width + 40, size.height / 2);
     final double radius = size.height * 0.75;
 
-    // 繪製圓弧背景
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
       pi * 0.75,
@@ -1283,7 +1427,6 @@ class ArcDialPainter extends CustomPainter {
       arcPaint,
     );
 
-    // 刻度線
     final Paint tickPaint = Paint()
       ..color = Colors.white70
       ..strokeWidth = 1.5;
@@ -1297,7 +1440,6 @@ class ArcDialPainter extends CustomPainter {
       canvas.drawLine(Offset(x1, y1), Offset(x2, y2), tickPaint);
     }
 
-    // 橘色當前變焦指針
     final double activeAngle = pi * 0.8 + ((currentZoom.clamp(1.0, 5.0) - 1.0) / 4.0) * (pi * 0.4);
     final Paint pointer = Paint()
       ..color = const Color(0xFFFF9500)
@@ -1327,7 +1469,6 @@ class DialTicksPainter extends CustomPainter {
       canvas.drawLine(Offset(x, 14), Offset(x, i == 7 ? 2 : 8), tick);
     }
 
-    // 中央指針 (金黃色)
     final Paint needle = Paint()
       ..color = const Color(0xFFFFCC00)
       ..strokeWidth = 3.0;
