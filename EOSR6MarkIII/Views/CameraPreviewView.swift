@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
@@ -9,7 +10,10 @@ struct CameraPreviewView: UIViewRepresentable {
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView(session: session)
         
-        // 綁定手勢與 Camera Control
+        // 註冊 Camera Control 實體按鍵事件
+        CameraControlManager.shared.attach(to: view, cameraService: cameraService, settings: settings)
+        
+        // 綁定取景畫面輕點對焦手勢
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         view.addGestureRecognizer(tapGesture)
         

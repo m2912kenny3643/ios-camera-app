@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import UIKit
+import AVKit
 
 class CameraControlManager {
     static let shared = CameraControlManager()
@@ -8,21 +9,21 @@ class CameraControlManager {
     weak var cameraService: CameraService?
     weak var settings: CameraSettings?
     
-    // 初始化與註冊 iOS 18+ Camera Control 實體按鍵事件
-    func attach(to viewController: UIViewController, cameraService: CameraService, settings: CameraSettings) {
+    // 初始化與註冊 iOS 17.2+ / iOS 18+ Camera Control 實體按鍵事件
+    func attach(to view: UIView, cameraService: CameraService, settings: CameraSettings) {
         self.cameraService = cameraService
         self.settings = settings
         
-        if #available(iOS 18.0, *) {
+        if #available(iOS 17.2, *) {
             let interaction = AVCaptureEventInteraction { [weak self] event in
                 guard let self = self else { return }
                 self.processCameraControlEvent(event)
             }
-            viewController.view.addInteraction(interaction)
+            view.addInteraction(interaction)
         }
     }
     
-    @available(iOS 18.0, *)
+    @available(iOS 17.2, *)
     private func processCameraControlEvent(_ event: AVCaptureEventInteraction.Event) {
         switch event.phase {
         case .began:

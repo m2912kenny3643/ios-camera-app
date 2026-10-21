@@ -22,7 +22,7 @@ targets:
       - path: EOSR6MarkIII
     settings:
       base:
-        PRODUCT_NAME: "EOS R6 Mark III"
+        PRODUCT_NAME: "EOSR6MarkIII"
         PRODUCT_BUNDLE_IDENTIFIER: tw.neofocus.eosr6mark3
         INFOPLIST_FILE: EOSR6MarkIII/Info.plist
         GENERATE_INFOPLIST_FILE: NO
