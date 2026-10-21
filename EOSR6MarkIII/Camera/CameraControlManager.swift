@@ -24,7 +24,7 @@ class CameraControlManager {
     }
     
     @available(iOS 17.2, *)
-    private func processCameraControlEvent(_ event: AVCaptureEventInteraction.Event) {
+    private func processCameraControlEvent(_ event: AVCaptureEvent) {
         switch event.phase {
         case .began:
             // 半按對焦 (Stage 1 / Half-Press)：鎖定 AF/AE，亮起綠色對焦框並發出 Canon 嗶聲

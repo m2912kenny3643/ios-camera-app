@@ -28,6 +28,7 @@ jobs:
 
       - name: Build iOS Application (Unsigned)
         run: |
+          set -o pipefail
           xcodebuild build \
             -project EOSR6MarkIII.xcodeproj \
             -scheme EOSR6MarkIII \
@@ -37,13 +38,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" > xcodebuild.log 2>&1 || {
-              echo "=== XCODEBUILD FAILED. RELEVANT LOGS: ==="
-              cat xcodebuild.log
-              ERR_MSG=$(tail -n 25 xcodebuild.log | tr '\n' ' ' | sed 's/::/ /g')
-              echo "::error::$ERR_MSG"
-              exit 1
-            }
+            DEVELOPMENT_TEAM=""
 
       - name: Package .app into Unsigned IPA
         run: |
@@ -62,13 +57,6 @@ jobs:
           name: EOSR6MarkIII-Unsigned-IPA
           path: build/EOSR6MarkIII.ipa
           retention-days: 30
-
-      - name: Upload Build Log on Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xcodebuild-failure-log
-          path: xcodebuild.log
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
