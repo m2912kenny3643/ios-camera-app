@@ -39,7 +39,9 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" > xcodebuild.log 2>&1 || {
               echo "=== XCODEBUILD FAILED. RELEVANT LOGS: ==="
-              grep -E "(error:|fatal error:|\*\* BUILD FAILED \*\*)" -B 2 -A 5 xcodebuild.log || tail -n 80 xcodebuild.log
+              cat xcodebuild.log
+              ERR_MSG=$(tail -n 25 xcodebuild.log | tr '\n' ' ' | sed 's/::/ /g')
+              echo "::error::$ERR_MSG"
               exit 1
             }
 
