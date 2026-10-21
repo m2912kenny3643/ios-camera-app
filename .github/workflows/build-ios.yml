@@ -48,7 +48,7 @@ jobs:
           cd build
           zip -r -9 EOSR6MarkIII.ipa Payload
           cd ..
-          ls -la build/EOSR6MarkIII.ipa
+          ls -lh build/EOSR6MarkIII.ipa
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4

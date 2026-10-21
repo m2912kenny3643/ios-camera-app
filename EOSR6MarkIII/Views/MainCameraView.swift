@@ -290,3 +290,54 @@ struct PickerSheet: View {
         .background(Color(UIColor.systemBackground))
     }
 }
+
+// MARK: - 機身擬真圓形按鈕
+struct BodyRoundButton: View {
+    let label: String
+    let subtitle: String
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text(label)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                Text(subtitle)
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.gray)
+            }
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(Color(white: 0.16)))
+            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - 機身擬真方形按鈕
+struct BodySquareButton: View {
+    let title: String
+    let subtitle: String
+    var isHighlighted: Bool = false
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(isHighlighted ? .black : .white)
+                Text(subtitle)
+                    .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isHighlighted ? .black : .yellow)
+            }
+            .frame(width: 46, height: 30)
+            .background(isHighlighted ? Color.yellow : Color(white: 0.16))
+            .cornerRadius(4)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.2), lineWidth: 1))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+

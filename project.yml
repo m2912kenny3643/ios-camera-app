@@ -20,6 +20,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: EOSR6MarkIII
+        excludes:
+          - "Info.plist"
     settings:
       base:
         PRODUCT_NAME: "EOSR6MarkIII"
