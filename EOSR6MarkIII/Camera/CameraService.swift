@@ -70,10 +70,6 @@ class CameraService: NSObject, ObservableObject {
                 
                 if self.session.canAddOutput(self.photoOutput) {
                     self.session.addOutput(self.photoOutput)
-                    self.photoOutput.isHighResolutionCaptureEnabled = true
-                    if self.photoOutput.isResponsiveCaptureSupported {
-                        self.photoOutput.isResponsiveCaptureEnabled = true // Zero shutter lag
-                    }
                 }
                 
                 self.session.commitConfiguration()
@@ -200,7 +196,7 @@ class CameraService: NSObject, ObservableObject {
             guard let self = self else { return }
             
             let photoSettings = AVCapturePhotoSettings()
-            photoSettings.isHighResolutionPhotoEnabled = true
+            photoSettings.photoQualityPrioritization = .balanced
             
             DispatchQueue.main.async {
                 SoundManager.shared.playShutterSound()
